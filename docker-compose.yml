@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB:       ${DATABASE_NAME:-mockbank}
+      POSTGRES_USER:     ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-olubukun}
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-mockbank}"]
+      interval: 5s
+      retries: 5
+
+  mock-bank:
+    build: 
+      context: .
+      dockerfile: mock-bank/Dockerfile
+    ports: ["8787:8787"]
+    env_file: [.env]
+    environment:
+      DATABASE_HOST: postgres
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports: ["3000:3000"]
+    env_file: [.env]
+    environment:
+      DATABASE_HOST: postgres
+      BANK_BASE_URL: http://mock-bank:8787
+    depends_on:
+      postgres:  { condition: service_healthy }
+      mock-bank: { condition: service_started }
+
+volumes:
+  pgdata:
