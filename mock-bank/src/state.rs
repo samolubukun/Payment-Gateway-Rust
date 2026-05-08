@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde_json::Value;
 use chrono::{DateTime, Utc};
+use crate::chaos::ChaosConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BankStatus {
@@ -27,10 +28,16 @@ pub struct BankState {
     pub transactions: HashMap<String, BankTransaction>,
     // Idempotency: (path, key) -> Response
     pub idempotency: HashMap<(String, String), Value>,
+    // Dynamic Chaos Config
+    pub chaos: ChaosConfig,
 }
 
 pub type SharedState = Arc<RwLock<BankState>>;
 
-pub fn new_state() -> SharedState {
-    Arc::new(RwLock::new(BankState::default()))
+pub fn new_state(chaos: ChaosConfig) -> SharedState {
+    Arc::new(RwLock::new(BankState {
+        transactions: HashMap::new(),
+        idempotency: HashMap::new(),
+        chaos,
+    }))
 }

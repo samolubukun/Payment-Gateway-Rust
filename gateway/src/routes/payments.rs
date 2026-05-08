@@ -31,6 +31,7 @@ pub async fn authorize(
     MerchantId(merchant_id): MerchantId,
     Json(payload): Json<CreatePaymentRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Received authorize request for order: {} from merchant: {}", payload.order_id, merchant_id);
     // 1. Idempotency check
     let hash = format!("{:?}", payload); // Simplified hash
     if let Some(req) = idempotency::get_request(&pool, &key, &merchant_id).await.map_err(anyhow::Error::from)? {

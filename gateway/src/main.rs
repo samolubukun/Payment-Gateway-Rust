@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use tower_http::cors::{Any, CorsLayer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use sqlx::postgres::PgPoolOptions;
@@ -70,11 +71,17 @@ async fn main() -> anyhow::Result<()> {
         bank: bank_client.clone(),
     };
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/v1/payments", post(routes::payments::authorize))
         .route("/v1/payments/:id/capture", post(routes::payments::capture))
         .route("/v1/payments/:id", get(routes::payments::get_payment))
         .route("/health", get(routes::health::health))
+        .layer(cors)
         .with_state(state);
 
     let port: u16 = std::env::var("GATEWAY_PORT").unwrap_or_else(|_| "3000".to_string()).parse()?;

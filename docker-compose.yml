@@ -36,5 +36,14 @@ services:
       postgres:  { condition: service_healthy }
       mock-bank: { condition: service_started }
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports: ["5173:80"]
+    depends_on:
+      - gateway
+      - mock-bank
+
 volumes:
   pgdata:

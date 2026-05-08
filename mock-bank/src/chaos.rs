@@ -8,7 +8,7 @@ use rand::Rng;
 use std::time::Duration;
 use tokio::time::sleep;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct ChaosConfig {
     pub enabled: bool,
     pub failure_rate: f64,
@@ -17,10 +17,15 @@ pub struct ChaosConfig {
 }
 
 pub async fn chaos_middleware(
-    config: ChaosConfig,
+    State(state): State<crate::state::SharedState>,
     req: Request,
     next: Next,
 ) -> Response {
+    let config = {
+        let s = state.read().await;
+        s.chaos.clone()
+    };
+
     if !config.enabled {
         return next.run(req).await;
     }

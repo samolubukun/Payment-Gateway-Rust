@@ -226,6 +226,15 @@ pub async fn refund(
     (StatusCode::OK, Json(response)).into_response()
 }
 
+pub async fn update_chaos(
+    State(state): State<SharedState>,
+    Json(new_config): Json<crate::chaos::ChaosConfig>,
+) -> impl IntoResponse {
+    let mut lock = state.write().await;
+    lock.chaos = new_config;
+    (StatusCode::OK, Json(json!({"status": "updated"}))).into_response()
+}
+
 fn get_idempotency_key(headers: &HeaderMap) -> Result<String, (StatusCode, Json<Value>)> {
     headers.get("Idempotency-Key")
         .and_then(|v| v.to_str().ok())

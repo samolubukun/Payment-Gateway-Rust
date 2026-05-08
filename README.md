@@ -19,7 +19,13 @@ The mock bank is a simulated credit card processor that behaves like a legacy fi
 * **State Validation**: Enforces its own strict rules (e.g., authorizations expire after 7 days, captures cannot exceed the authorized amount).
 * **API Documentation**: Provides an interactive Swagger UI to explore and manually test the banking endpoints.
 
-### 3. PostgreSQL Database
+### 3. FICPAY Simulator (Dashboard)
+A real-time dashboard that provides a visual simulation environment for the payment lifecycle.
+* **Real-time Visualization**: Watch "packets" move between FicMart, the Gateway, and the Bank Core in real-time.
+* **Chaos Engineering Panel**: Dynamically adjust bank latency and failure probability via the UI.
+* **Traffic Monitor**: Inspect the raw HTTP requests and responses as they hit each node.
+
+### 4. PostgreSQL Database
 The state is managed in a single relational database containing three core tables:
 * `payments`: Stores the current state, amount, and bank references for every order.
 * `idempotency_requests`: Stores the cached HTTP responses and locks for concurrent duplicate requests.
@@ -47,6 +53,12 @@ payment-gateway/
 │   │   ├── routes/             (API endpoints for Authorize, Capture, etc.)
 │   │   └── workers/            (Background recovery worker logic)
 │
+├── dashboard/                  (FICPAY Simulator Dashboard)
+│   ├── src/
+│   │   ├── App.jsx             (Core simulation logic and UI)
+│   │   └── index.css           (Brutalist high-contrast theme)
+│   └── Dockerfile              (Nginx production build)
+│
 └── mock-bank/                  (Mock Bank Crate)
     ├── src/
     │   ├── cards.rs            (Hardcoded test cards and balances)
@@ -64,6 +76,7 @@ This approach bypasses any local environment setup and automatically handles dat
 ```bash
 docker compose up --build
 ```
+Once started, the dashboard will be available at **http://localhost:5173**.
 
 ### Option B: Local Execution
 Requires Rust and PostgreSQL to be installed locally.
@@ -85,6 +98,13 @@ Requires Rust and PostgreSQL to be installed locally.
    ```bash
    cargo run -p gateway
    ```
+6. Start the Dashboard in Terminal 3:
+   ```bash
+   cd dashboard
+   npm install
+   npm run dev
+   ```
+   The dashboard will be available at **http://localhost:5173**.
 
 ## API Documentation and Testing
 

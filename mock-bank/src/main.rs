@@ -10,6 +10,7 @@ use axum::{
     Router,
     middleware,
 };
+use tower_http::cors::{Any, CorsLayer};
 use std::net::SocketAddr;
 use crate::state::new_state;
 use crate::chaos::{chaos_middleware, ChaosConfig};
@@ -26,8 +27,6 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let state = new_state();
-
     let chaos_config = ChaosConfig {
         enabled: std::env::var("CHAOS_ENABLED").unwrap_or_else(|_| "true".to_string()) == "true",
         failure_rate: std::env::var("CHAOS_FAILURE_RATE").unwrap_or_else(|_| "0.05".to_string()).parse()?,
@@ -35,18 +34,22 @@ async fn main() -> anyhow::Result<()> {
         max_latency_ms: std::env::var("CHAOS_MAX_LATENCY_MS").unwrap_or_else(|_| "2000".to_string()).parse()?,
     };
 
+    let state = new_state(chaos_config);
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/api/v1/authorizations", post(routes::authorize))
         .route("/api/v1/captures", post(routes::capture))
         .route("/api/v1/voids", post(routes::void))
         .route("/api/v1/refunds", post(routes::refund))
-        .layer(middleware::from_fn(move |req, next| {
-            let config = chaos_config.clone();
-            async move {
-                chaos_middleware(config, req, next).await
-            }
-        }))
+        .route("/api/v1/chaos", post(routes::update_chaos))
+        .layer(middleware::from_fn_with_state(state.clone(), chaos_middleware))
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", docs::ApiDoc::openapi()))
+        .layer(cors)
         .with_state(state);
 
     let port: u16 = std::env::var("MOCK_BANK_PORT").unwrap_or_else(|_| "8787".to_string()).parse()?;
