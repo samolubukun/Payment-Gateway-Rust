@@ -16,6 +16,21 @@ import axios from 'axios';
 const GATEWAY_URL = 'http://localhost:3000';
 const BANK_URL = 'http://localhost:8787';
 
+const GithubIcon = ({ size = 16 }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round"
+  >
+    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7a3.37 3.37 0 0 0-.94 2.58V22"></path>
+  </svg>
+);
+
 function App() {
   const [logs, setLogs] = useState([]);
   const [traffic, setTraffic] = useState([]);
@@ -159,6 +174,16 @@ function App() {
           <CreditCard size={24} color="#ffffff" />
           <h1>FICPAY <span style={{ opacity: 0.8, fontWeight: 300 }}>SIMULATOR</span></h1>
         </div>
+        <a 
+          href="https://github.com/samolubukun/Payment-Gateway-Rust" 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="github-link"
+        >
+          <GithubIcon size={16} />
+          <span>SOURCE CODE</span>
+        </a>
+
         <div className="system-status">
           <div className={`status-item ${gatewayStatus === 'online' ? 'status-online' : 'status-offline'}`}>
             <div className="status-dot"></div>

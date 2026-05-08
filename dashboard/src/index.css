@@ -325,3 +325,24 @@ input[type="range"]::-webkit-slider-thumb {
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: #ffffff; }
+
+.github-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #ffffff;
+  text-decoration: none;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  background: transparent;
+}
+
+.github-link:hover {
+  background: #ffffff;
+  color: #000000;
+}

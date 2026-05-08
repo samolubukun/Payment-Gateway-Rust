@@ -1,0 +1,11 @@
+target/
+node_modules/
+.git/
+.env
+*.log
+dashboard/dist/
+dashboard/node_modules/
+docker-compose.yml
+GUIDE_*.md
+TRADEOFFS.md
+README.md
