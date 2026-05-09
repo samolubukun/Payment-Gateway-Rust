@@ -21,6 +21,10 @@ pub async fn chaos_middleware(
     req: Request,
     next: Next,
 ) -> Response {
+    if req.uri().path() == "/api/v1/chaos" || req.uri().path().starts_with("/docs") || req.uri().path().starts_with("/api-docs") {
+        return next.run(req).await;
+    }
+
     let config = {
         let s = state.read().await;
         s.chaos.clone()

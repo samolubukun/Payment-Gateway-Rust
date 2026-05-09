@@ -43,13 +43,23 @@ function App() {
   const [gatewayStatus, setGatewayStatus] = useState('offline');
   const [bankStatus, setBankStatus] = useState('offline');
   const [simulationId, setSimulationId] = useState(0);
+  const [scenario, setScenario] = useState('happy');
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [{ id: Date.now() + Math.random(), msg, type, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 100));
   }, []);
 
-  const addTraffic = useCallback((method, path, body, response = null) => {
-    setTraffic(prev => [{ id: Date.now() + Math.random(), method, path, body, response, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 50));
+  const addTraffic = useCallback((method, path, body, response = null, meta = {}) => {
+    setTraffic(prev => [{
+      id: Date.now() + Math.random(),
+      method,
+      path,
+      body,
+      response,
+      status: meta.status,
+      durationMs: meta.durationMs,
+      time: new Date().toLocaleTimeString()
+    }, ...prev].slice(0, 50));
   }, []);
 
   const checkHealth = async () => {
@@ -76,14 +86,19 @@ function App() {
   useEffect(() => {
     const syncChaos = async () => {
       try {
+        const chaosEnabled = chaosConfig.failureRate > 0 || chaosConfig.latency > 0;
         await axios.post(`${BANK_URL}/api/v1/chaos`, {
-          enabled: true,
+          enabled: chaosEnabled,
           failure_rate: chaosConfig.failureRate,
           min_latency_ms: chaosConfig.latency,
           max_latency_ms: chaosConfig.latency + 200
         });
-        addLog(`System parameters synchronized. Latency: ${chaosConfig.latency}ms`, 'info');
+        addLog(
+          `System parameters synchronized. Chaos ${chaosEnabled ? 'enabled' : 'disabled'}, latency ${chaosConfig.latency}ms, failure ${(chaosConfig.failureRate * 100).toFixed(0)}%`,
+          'info'
+        );
       } catch (err) {
+        addLog('Chaos sync failed; bank may keep previous settings.', 'error');
         console.error('Sync failed', err);
       }
     };
@@ -102,23 +117,41 @@ function App() {
     
     addLog(`INIT: Simulation sequence ${currentId.toString().slice(-6)} started.`, 'info');
 
+    const scenarioCards = {
+      happy: { number: '4111111111111111', exp_month: 12, exp_year: 2030, cvv: '123' },
+      insufficient: { number: '5555555555554444', exp_month: 9, exp_year: 2030, cvv: '789' },
+      expired: { number: '5105105105105100', exp_month: 3, exp_year: 2020, cvv: '321' }
+    };
+
     const paymentData = {
       order_id: `ORD-${Math.floor(Math.random() * 1000000)}`,
       customer_id: `CUST-${Math.floor(Math.random() * 1000)}`,
-      amount_cents: Math.floor(Math.random() * 5000) + 100,
+      amount_cents: scenario === 'insufficient' ? 50000 : Math.floor(Math.random() * 5000) + 100,
       currency: 'USD',
-      card: {
-        number: '4111111111111111',
-        exp_month: 12,
-        exp_year: 2030,
-        cvv: '123'
-      }
+      card: scenarioCards[scenario]
     };
 
     let step2Timer, step3Timer;
 
+    const requestWithTraffic = async (method, url, body, headers, label) => {
+      const startTime = performance.now();
+      addTraffic(method, url.replace(GATEWAY_URL, '').replace(BANK_URL, ''), body);
+      addLog(`REQ: ${label}`, 'info');
+
+      try {
+        const response = await axios({ method, url, data: body, headers });
+        const durationMs = Math.round(performance.now() - startTime);
+        addTraffic('RESPONSE', `HTTP ${response.status}`, null, response.data, { status: response.status, durationMs });
+        return response;
+      } catch (err) {
+        const durationMs = Math.round(performance.now() - startTime);
+        const status = err.response?.status || 500;
+        addTraffic('ERROR', `HTTP ${status}`, null, err.response?.data, { status, durationMs });
+        throw err;
+      }
+    };
+
     try {
-      addTraffic('POST', '/v1/payments', paymentData);
       addLog(`REQ: Sending authorization payload to Gateway...`, 'info');
       
       step2Timer = setTimeout(() => {
@@ -132,12 +165,16 @@ function App() {
         addLog('EXEC: Mock Bank processing core logic...', 'info');
       }, 2200);
 
-      const response = await axios.post(`${GATEWAY_URL}/v1/payments`, paymentData, {
-        headers: {
+      const response = await requestWithTraffic(
+        'POST',
+        `${GATEWAY_URL}/v1/payments`,
+        paymentData,
+        {
           'Idempotency-Key': `sim-${currentId}-${Math.floor(Math.random() * 1000)}`,
           'X-Merchant-Id': 'simulation_merchant'
-        }
-      });
+        },
+        'Gateway authorize'
+      );
       
       // If we got here, success
       clearTimeout(step2Timer);
@@ -149,8 +186,29 @@ function App() {
       setTimeout(() => {
         setStep(5);
         addLog(`DONE: Payment authorized. Transaction ID: ${response.data.id}`, 'success');
-        addTraffic('RESPONSE', '201 Created', null, response.data);
+        addTraffic('RESPONSE', `HTTP ${response.status}`, null, response.data, { status: response.status });
       }, 800);
+
+      const paymentId = response.data?.id;
+      if (paymentId) {
+        await requestWithTraffic(
+          'GET',
+          `${GATEWAY_URL}/v1/payments/${paymentId}`,
+          null,
+          null,
+          'Gateway fetch payment'
+        );
+
+        if (scenario === 'happy') {
+          await requestWithTraffic(
+            'POST',
+            `${GATEWAY_URL}/v1/payments/${paymentId}/capture`,
+            null,
+            { 'Idempotency-Key': `sim-cap-${currentId}` },
+            'Gateway capture'
+          );
+        }
+      }
 
     } catch (err) {
       clearTimeout(step2Timer);
@@ -158,7 +216,7 @@ function App() {
       setStep(0);
       const errorMsg = err.response?.data?.error?.message || err.message;
       addLog(`FAIL: ${errorMsg}`, 'error');
-      addTraffic('ERROR', err.response?.status || '500', null, err.response?.data);
+      addTraffic('ERROR', `HTTP ${err.response?.status || '500'}`, null, err.response?.data, { status: err.response?.status || 500 });
     } finally {
       setTimeout(() => {
         setIsSimulating(false);
@@ -268,12 +326,22 @@ function App() {
               <div className="console-content">
                 {traffic.map(t => (
                   <div key={t.id} className="traffic-entry">
-                    <div>
+                    <div className="traffic-row">
                       <span className="traffic-method">{t.method}</span>{' '}
                       <span className="traffic-path">{t.path}</span>
+                      {typeof t.status !== 'undefined' && (
+                        <span className="traffic-status">{t.status}</span>
+                      )}
+                      {typeof t.durationMs !== 'undefined' && (
+                        <span className="traffic-duration">{t.durationMs}ms</span>
+                      )}
                     </div>
-                    {t.body && <div style={{ fontSize: '0.7rem', opacity: 0.6, marginTop: 4 }}>BODY: {JSON.stringify(t.body)}</div>}
-                    {t.response && <div style={{ fontSize: '0.7rem', color: '#22c55e', marginTop: 4 }}>RES: {JSON.stringify(t.response)}</div>}
+                    {t.body && (
+                      <pre className="traffic-json">{JSON.stringify(t.body, null, 2)}</pre>
+                    )}
+                    {t.response && (
+                      <pre className="traffic-json traffic-response">{JSON.stringify(t.response, null, 2)}</pre>
+                    )}
                   </div>
                 ))}
                 {traffic.length === 0 && <div style={{ opacity: 0.3, textAlign: 'center', marginTop: '2rem' }}>Listening for traffic...</div>}
@@ -298,8 +366,22 @@ function App() {
         </div>
 
         <div className="control-panel">
-          <div className="control-group">
-            <h3>SIMULATION ENGINE</h3>
+            <div className="control-group">
+              <h3>SIMULATION ENGINE</h3>
+              <div className="slider-container">
+                <div className="slider-header">
+                  <label>SCENARIO MODE</label>
+                </div>
+                <select
+                  value={scenario}
+                  onChange={(e) => setScenario(e.target.value)}
+                  className="scenario-select"
+                >
+                  <option value="happy">Happy path</option>
+                  <option value="insufficient">Insufficient funds</option>
+                  <option value="expired">Expired card</option>
+                </select>
+              </div>
             <div className="slider-container">
               <div className="slider-header">
                 <label>NETWORK LATENCY</label>

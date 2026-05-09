@@ -11,19 +11,21 @@ The Gateway is the primary service handling incoming requests from the e-commerc
 * **Idempotency Layer**: Implements a strict "in-flight" database locking mechanism. If the e-commerce platform retries a request due to a network timeout, the gateway guarantees the bank is not hit twice and the original response is safely returned.
 * **State Machine**: Enforces valid transitions. For example, a payment cannot be voided if it has already been captured, and it cannot be refunded if it hasn't been captured.
 * **Bank Client**: Communicates with the mock bank via HTTP, utilizing exponential backoff and jitter to survive transient 5xx errors and network timeouts.
+* **Error Mapping**: Distinguishes declines (402), validation failures (422), and upstream outages (503).
 * **Recovery Worker**: A background Tokio task that periodically polls the database for "stuck" pending payments. If an authorization request timed out, the worker actively asks the bank for the true status and reconciles the gateway's database.
 
 ### 2. Mock Bank Service
 The mock bank is a simulated credit card processor that behaves like a legacy financial institution.
 * **Chaos Middleware**: Intentionally injects random latency (up to 2000ms) and random HTTP 500 Internal Server Errors to test the resilience of the Gateway.
 * **State Validation**: Enforces its own strict rules (e.g., authorizations expire after 7 days, captures cannot exceed the authorized amount).
+* **Idempotency**: Rejects idempotency key reuse with a different payload and returns cached responses for identical requests.
 * **API Documentation**: Provides an interactive Swagger UI to explore and manually test the banking endpoints.
 
 ### 3. FICPAY Simulator (Dashboard)
 A real-time dashboard that provides a visual simulation environment for the payment lifecycle.
 * **Real-time Visualization**: Watch "packets" move between FicMart, the Gateway, and the Bank Core in real-time.
 * **Chaos Engineering Panel**: Dynamically adjust bank latency and failure probability via the UI.
-* **Traffic Monitor**: Inspect the raw HTTP requests and responses as they hit each node.
+* **Traffic Monitor**: Inspect request/response bodies, status codes, and timing per hop.
 
 ### 4. PostgreSQL Database
 The state is managed in a single relational database containing three core tables:
@@ -96,7 +98,7 @@ Requires Rust and PostgreSQL to be installed locally.
    ```
 5. Start the Gateway in Terminal 2 (Migrations will automatically apply on boot):
    ```bash
-   cargo run -p gateway
+    cargo run -p gateway --bin gateway
    ```
 6. Start the Dashboard in Terminal 3:
    ```bash

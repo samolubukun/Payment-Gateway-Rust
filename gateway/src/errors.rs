@@ -19,7 +19,11 @@ pub enum AppError {
     #[error("cannot {operation} a payment in {from} status")]
     InvalidTransition { from: String, operation: String },
     #[error("bank declined: {reason}")]
-    BankDeclined { reason: String, retryable: bool },
+    BankDeclined { reason: String },
+    #[error("bank temporarily unavailable: {reason}")]
+    BankUnavailable { reason: String },
+    #[error("bank validation failed: {reason}")]
+    BankValidation { reason: String },
     #[error("internal error")]
     Internal(#[from] anyhow::Error),
 }
@@ -33,6 +37,8 @@ impl IntoResponse for AppError {
             AppError::NotFound                 => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             AppError::InvalidTransition { .. } => (StatusCode::CONFLICT, "INVALID_TRANSITION"),
             AppError::BankDeclined { .. }      => (StatusCode::PAYMENT_REQUIRED, "BANK_DECLINED"),
+            AppError::BankUnavailable { .. }   => (StatusCode::SERVICE_UNAVAILABLE, "BANK_UNAVAILABLE"),
+            AppError::BankValidation { .. }    => (StatusCode::UNPROCESSABLE_ENTITY, "BANK_VALIDATION_FAILED"),
             AppError::Internal(_)              => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
         };
         

@@ -85,7 +85,7 @@ pub async fn authorize(
             // Handle failure - for now just return error
             // In a real app, we might store the failure reason
             tx.rollback().await.map_err(anyhow::Error::from)?;
-            Err(AppError::BankDeclined { reason: e.to_string(), retryable: e.is_retryable() })
+            Err(map_bank_error(e))
         }
     }
 }
@@ -121,8 +121,22 @@ pub async fn capture(
         }
         Err(e) => {
              tx.rollback().await.map_err(anyhow::Error::from)?;
-             Err(AppError::BankDeclined { reason: e.to_string(), retryable: e.is_retryable() })
+             Err(map_bank_error(e))
         }
+    }
+}
+
+fn map_bank_error(err: crate::bank::BankError) -> AppError {
+    use crate::bank::BankError;
+    match err {
+        BankError::InsufficientFunds => AppError::BankDeclined { reason: "insufficient funds".to_string() },
+        BankError::InvalidCard => AppError::BankValidation { reason: "invalid card".to_string() },
+        BankError::AuthExpired => AppError::BankValidation { reason: "card expired".to_string() },
+        BankError::CardDeclined { reason } => AppError::BankDeclined { reason },
+        BankError::StateConflict { message } => AppError::BankValidation { reason: message },
+        BankError::ServerError { status } => AppError::BankUnavailable { reason: format!("bank 5xx: {}", status) },
+        BankError::Timeout => AppError::BankUnavailable { reason: "bank timeout".to_string() },
+        BankError::Network(err) => AppError::BankUnavailable { reason: err.to_string() },
     }
 }
 
