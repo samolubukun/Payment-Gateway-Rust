@@ -22,3 +22,4 @@ envy.workspace = true
 common = { path = "../common" }
 uuid.workspace = true
 chrono.workspace = true
+sha2.workspace = true

@@ -1,8 +1,6 @@
-use common::CardDetails;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
 
 const GATEWAY_URL: &str = "http://localhost:3000/v1/payments";
 const MERCHANT_ID: &str = "merch_test_123";

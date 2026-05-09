@@ -5,6 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use crate::models::*;
 use crate::state::*;
@@ -32,8 +33,12 @@ pub async fn authorize(
     };
 
     let path = "/api/v1/authorizations".to_string();
-    
-    if let Some(cached) = check_idempotency(&state, &path, &idempotency_key).await {
+    let request_hash = hash_request(&payload);
+
+    if let Some(cached) = match check_idempotency(&state, &path, &idempotency_key, &request_hash).await {
+        Ok(result) => result,
+        Err(err) => return err.into_response(),
+    } {
         return (StatusCode::OK, [("X-Idempotent-Replayed", "true")], Json(cached)).into_response();
     }
 
@@ -64,6 +69,8 @@ pub async fn authorize(
         amount_cents: payload.amount_cents,
         card_number: card.number.to_string(),
         created_at: Utc::now(),
+        capture_id: None,
+        refund_id: None,
     };
 
     let response = json!(AuthorizeResponse {
@@ -71,7 +78,7 @@ pub async fn authorize(
         status: "authorized".to_string(),
     });
 
-    save_transaction_and_idempotency(&state, path, idempotency_key, auth_id, transaction, response.clone()).await;
+    save_transaction_and_idempotency(&state, path, idempotency_key, request_hash, auth_id, transaction, response.clone()).await;
 
     (StatusCode::OK, Json(response)).into_response()
 }
@@ -96,8 +103,12 @@ pub async fn capture(
     };
 
     let path = "/api/v1/captures".to_string();
-    
-    if let Some(cached) = check_idempotency(&state, &path, &idempotency_key).await {
+    let request_hash = hash_request(&payload);
+
+    if let Some(cached) = match check_idempotency(&state, &path, &idempotency_key, &request_hash).await {
+        Ok(result) => result,
+        Err(err) => return err.into_response(),
+    } {
         return (StatusCode::OK, [("X-Idempotent-Replayed", "true")], Json(cached)).into_response();
     }
 
@@ -111,6 +122,10 @@ pub async fn capture(
         return (StatusCode::CONFLICT, Json(json!({"error": "Transaction not in authorized state", "code": "INVALID_STATE"}))).into_response();
     }
 
+    if payload.amount_cents > tx.amount_cents {
+        return (StatusCode::CONFLICT, Json(json!({"error": "Capture amount exceeds authorized amount", "code": "AMOUNT_EXCEEDS_AUTH"}))).into_response();
+    }
+
     // 7-day TTL check
     if (Utc::now() - tx.created_at).num_days() >= 7 {
          return (StatusCode::GONE, Json(json!({"error": "Authorization expired", "code": "AUTH_EXPIRED"}))).into_response();
@@ -118,13 +133,14 @@ pub async fn capture(
 
     tx.status = BankStatus::Captured;
     let capture_id = Uuid::new_v4().to_string();
+    tx.capture_id = Some(capture_id.clone());
     
     let response = json!(CaptureResponse {
         capture_id: capture_id.clone(),
         status: "captured".to_string(),
     });
 
-    lock.idempotency.insert((path, idempotency_key), response.clone());
+    lock.idempotency.insert((path, idempotency_key), IdempotencyRecord { request_hash, response: response.clone() });
 
     (StatusCode::OK, Json(response)).into_response()
 }
@@ -149,8 +165,12 @@ pub async fn void(
     };
 
     let path = "/api/v1/voids".to_string();
-    
-    if let Some(cached) = check_idempotency(&state, &path, &idempotency_key).await {
+    let request_hash = hash_request(&payload);
+
+    if let Some(cached) = match check_idempotency(&state, &path, &idempotency_key, &request_hash).await {
+        Ok(result) => result,
+        Err(err) => return err.into_response(),
+    } {
         return (StatusCode::OK, [("X-Idempotent-Replayed", "true")], Json(cached)).into_response();
     }
 
@@ -172,7 +192,7 @@ pub async fn void(
         status: "voided".to_string(),
     });
 
-    lock.idempotency.insert((path, idempotency_key), response.clone());
+    lock.idempotency.insert((path, idempotency_key), IdempotencyRecord { request_hash, response: response.clone() });
 
     (StatusCode::OK, Json(response)).into_response()
 }
@@ -188,7 +208,7 @@ pub async fn void(
 pub async fn refund(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Json(_payload): Json<RefundRequest>,
+    Json(payload): Json<RefundRequest>,
 ) -> impl IntoResponse {
     let idempotency_key = match get_idempotency_key(&headers) {
         Ok(key) => key,
@@ -196,32 +216,41 @@ pub async fn refund(
     };
 
     let path = "/api/v1/refunds".to_string();
-    
-    if let Some(cached) = check_idempotency(&state, &path, &idempotency_key).await {
+    let request_hash = hash_request(&payload);
+
+    if let Some(cached) = match check_idempotency(&state, &path, &idempotency_key, &request_hash).await {
+        Ok(result) => result,
+        Err(err) => return err.into_response(),
+    } {
         return (StatusCode::OK, [("X-Idempotent-Replayed", "true")], Json(cached)).into_response();
     }
 
     let mut lock = state.write().await;
-    // For refund, we'd normally look up by capture_id, but here we'll just check if there's ANY transaction with that capture_id logic
-    // Simplified: find transaction by its auth_id (using capture_id as proxy for simplicity in this mock)
-    // In a real bank, capture would have its own ID. Let's just allow refunding any captured transaction.
-    
-    let tx = lock.transactions.values_mut().find(|t| t.status == BankStatus::Captured); // Simplified lookup
-    
+    let tx = lock.transactions.values_mut().find(|t| t.capture_id.as_deref() == Some(&payload.capture_id));
+
     let tx = match tx {
         Some(tx) => tx,
         None => return (StatusCode::NOT_FOUND, Json(json!({"error": "Captured transaction not found", "code": "CAPTURE_NOT_FOUND"}))).into_response(),
     };
 
+    if tx.status != BankStatus::Captured {
+        return (StatusCode::CONFLICT, Json(json!({"error": "Transaction not in captured state", "code": "INVALID_STATE"}))).into_response();
+    }
+
+    if payload.amount_cents > tx.amount_cents {
+        return (StatusCode::CONFLICT, Json(json!({"error": "Refund amount exceeds captured amount", "code": "AMOUNT_EXCEEDS_CAPTURE"}))).into_response();
+    }
+
     tx.status = BankStatus::Refunded;
     let refund_id = Uuid::new_v4().to_string();
+    tx.refund_id = Some(refund_id.clone());
     
     let response = json!(RefundResponse {
         refund_id: refund_id.clone(),
         status: "refunded".to_string(),
     });
 
-    lock.idempotency.insert((path, idempotency_key), response.clone());
+    lock.idempotency.insert((path, idempotency_key), IdempotencyRecord { request_hash, response: response.clone() });
 
     (StatusCode::OK, Json(response)).into_response()
 }
@@ -242,20 +271,34 @@ fn get_idempotency_key(headers: &HeaderMap) -> Result<String, (StatusCode, Json<
         .ok_or((StatusCode::BAD_REQUEST, Json(json!({"error": "Missing Idempotency-Key header", "code": "MISSING_IDEMPOTENCY_KEY"}))))
 }
 
-async fn check_idempotency(state: &SharedState, path: &str, key: &str) -> Option<Value> {
+async fn check_idempotency(state: &SharedState, path: &str, key: &str, request_hash: &str) -> Result<Option<Value>, (StatusCode, Json<Value>)> {
     let lock = state.read().await;
-    lock.idempotency.get(&(path.to_string(), key.to_string())).cloned()
+    if let Some(record) = lock.idempotency.get(&(path.to_string(), key.to_string())) {
+        if record.request_hash == request_hash {
+            return Ok(Some(record.response.clone()));
+        }
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": "Idempotency key reused with different request", "code": "IDEMPOTENCY_KEY_CONFLICT"}))));
+    }
+    Ok(None)
 }
 
 async fn save_transaction_and_idempotency(
     state: &SharedState,
     path: String,
     key: String,
+    request_hash: String,
     id: String,
     tx: BankTransaction,
     response: Value
 ) {
     let mut lock = state.write().await;
     lock.transactions.insert(id, tx);
-    lock.idempotency.insert((path, key), response);
+    lock.idempotency.insert((path, key), IdempotencyRecord { request_hash, response });
+}
+
+fn hash_request<T: serde::Serialize>(payload: &T) -> String {
+    let body = serde_json::to_vec(payload).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(&body);
+    format!("{:x}", hasher.finalize())
 }

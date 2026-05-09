@@ -4,7 +4,7 @@ use axum::{
     Json,
     response::IntoResponse,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 use crate::db::repository::{PaymentRepository, IdempotencyStatus, idempotency};
@@ -14,8 +14,9 @@ use crate::domain::payment::PaymentStatus;
 use crate::errors::AppError;
 use std::sync::Arc;
 use sqlx::PgPool;
+use sha2::{Digest, Sha256};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CreatePaymentRequest {
     pub order_id: String,
     pub customer_id: String,
@@ -33,13 +34,22 @@ pub async fn authorize(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::info!("Received authorize request for order: {} from merchant: {}", payload.order_id, merchant_id);
     // 1. Idempotency check
-    let hash = format!("{:?}", payload); // Simplified hash
+    let hash = {
+        let body = serde_json::to_vec(&payload).map_err(anyhow::Error::from)?;
+        let mut hasher = Sha256::new();
+        hasher.update(&body);
+        format!("{:x}", hasher.finalize())
+    };
     if let Some(req) = idempotency::get_request(&pool, &key, &merchant_id).await.map_err(anyhow::Error::from)? {
+        if req.request_hash != hash {
+            return Err(AppError::IdempotencyKeyConflict);
+        }
+
         if req.status == IdempotencyStatus::Complete {
             let body = req.response_body.unwrap_or(json!({}));
             return Ok((StatusCode::OK, [("X-Idempotent-Replayed", "true")], Json(body)).into_response());
         } else {
-            return Err(AppError::Internal(anyhow::anyhow!("Request in flight")));
+            return Err(AppError::IdempotencyInFlight);
         }
     }
     idempotency::create_request(&pool, &key, &merchant_id, &hash).await.map_err(anyhow::Error::from)?;
@@ -67,9 +77,9 @@ pub async fn authorize(
             ).await.map_err(anyhow::Error::from)?;
             
             let response = json!({ "id": payment_id, "status": "authorized" });
-            idempotency::complete_request(&pool, &key, 200, response.clone()).await.map_err(anyhow::Error::from)?;
+            idempotency::complete_request_tx(&mut tx, &key, 200, response.clone()).await.map_err(anyhow::Error::from)?;
             tx.commit().await.map_err(anyhow::Error::from)?;
-            Ok((StatusCode::ACCEPTED, Json(response)).into_response())
+            Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
             // Handle failure - for now just return error

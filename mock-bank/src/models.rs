@@ -2,7 +2,7 @@ use common::CardDetails;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct AuthorizeRequest {
     pub amount_cents: i64,
     pub currency: String,
@@ -15,7 +15,7 @@ pub struct AuthorizeResponse {
     pub status: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CaptureRequest {
     pub auth_id: String,
     pub amount_cents: i64,
@@ -27,7 +27,7 @@ pub struct CaptureResponse {
     pub status: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct VoidRequest {
     pub auth_id: String,
 }
@@ -38,7 +38,7 @@ pub struct VoidResponse {
     pub status: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct RefundRequest {
     pub capture_id: String,
     pub amount_cents: i64,

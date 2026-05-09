@@ -95,6 +95,7 @@ impl PaymentRepository {
 }
 
 #[derive(sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct PaymentRow {
     pub id: Uuid,
     pub idempotency_key: String,
@@ -143,7 +144,12 @@ pub mod idempotency {
         Ok(())
     }
 
-    pub async fn complete_request(pool: &PgPool, key: &str, status: i32, body: Value) -> Result<(), sqlx::Error> {
+    pub async fn complete_request_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        key: &str,
+        status: i32,
+        body: Value,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE idempotency_requests SET status = 'complete', response_status = $1, response_body = $2
@@ -153,7 +159,7 @@ pub mod idempotency {
         .bind(status)
         .bind(body)
         .bind(key)
-        .execute(pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
@@ -167,6 +173,7 @@ pub enum IdempotencyStatus {
 }
 
 #[derive(sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct IdempotencyRequest {
     pub key: String,
     pub merchant_id: String,

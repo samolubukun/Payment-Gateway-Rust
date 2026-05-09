@@ -25,4 +25,5 @@ dotenvy.workspace = true
 envy.workspace = true
 async-trait.workspace = true
 futures.workspace = true
+sha2.workspace = true
 common = { path = "../common" }
